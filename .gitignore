@@ -1,0 +1,3 @@
+# Ignore binary
+/bin/**
+**/__debug_bin**
