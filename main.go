@@ -21,6 +21,7 @@ type Config struct {
 	BatchSize   int
 	Retries     int
 	DryRun      bool
+	Quiet		bool
 }
 
 // https://stackoverflow.com/a/25113485
@@ -83,6 +84,7 @@ func parseArgs() (Config, error) {
 	batchOpt := flag.Int("batch", 1000, "Pseudo-amount of messages to commit to DB")
 	dryOpt := flag.Bool("dry", false, "Dry run: read EML and attempt necessary transformations, but do not commit changes to the database")
 	retriesOpt := flag.Int("retries", 10, "Amount of attempts to run a database transaction")
+	quietOpt := flag.Bool("quiet", false, "Suppress output about unmatched messages")
 	flag.Parse()
 
 	// Process non-options
@@ -125,6 +127,7 @@ func parseArgs() (Config, error) {
 	}
 
 	config.DryRun = *dryOpt
+	config.Quiet = *quietOpt
 
 	return config, nil
 }
@@ -173,7 +176,7 @@ func runApp(config Config) error {
 		}
 	}
 
-	entries, err := eml2miniflux.GetEntriesForEML(store, feedHelper, config.MessageFile, user, defaultFeed)
+	entries, err := eml2miniflux.GetEntriesForEML(store, feedHelper, config.MessageFile, user, defaultFeed, config.Quiet)
 	if err != nil {
 		return fmt.Errorf(`cannot create entry for message: %v`, err)
 	}

@@ -36,7 +36,7 @@ func emlToEntry(store *storage.Storage, feedHelper *FeedHelper, messageFile stri
 }
 
 // Recursively traverse directories and load *.eml files
-func emlWalkFunc(entries *model.Entries, entryCounter *int, store *storage.Storage, feedHelper *FeedHelper, user *model.User, defaultFeed *model.Feed) filepath.WalkFunc {
+func emlWalkFunc(entries *model.Entries, entryCounter *int, store *storage.Storage, feedHelper *FeedHelper, user *model.User, defaultFeed *model.Feed, quiet bool) filepath.WalkFunc {
 	return func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FS Error: %s: %s\n", path, err)
@@ -47,13 +47,17 @@ func emlWalkFunc(entries *model.Entries, entryCounter *int, store *storage.Stora
 			if strings.HasSuffix(strings.ToLower(path), ".eml") {
 				*entryCounter++
 				if *entryCounter%1000 == 0 {
-					fmt.Fprintf(os.Stdout, "Reading EML: %d\n", entryCounter)
+					fmt.Fprintf(os.Stdout, "Reading EML: %d\n", *entryCounter)
 				}
 
 				var entry *model.Entry
 				entry, err = emlToEntry(store, feedHelper, path, user, defaultFeed)
 				if err != nil {
-					if _, ok := err.(*FeedIgnoreError); !ok {
+					if _, ok := err.(*FeedIgnoreError); ok {
+						// entry is ignored, be silent
+					} else if _, ok := err.(*FeedNoMatchError); ok && quiet {
+						// entry is not ignored, but quiet flag set, be silent
+					} else {
 						fmt.Fprintf(os.Stderr, "Error on processing file: %s: %s\n", path, err)
 					}
 				} else {
@@ -69,7 +73,7 @@ func emlWalkFunc(entries *model.Entries, entryCounter *int, store *storage.Stora
 // Load EML from the specified messagesPath and create model Entry
 // - if messagesPath is a directory: traverse recursively and load all *.eml files
 // - otherwise load a single file
-func GetEntriesForEML(store *storage.Storage, feedHelper *FeedHelper, messagesPath string, user *model.User, defaultFeed *model.Feed) (model.Entries, error) {
+func GetEntriesForEML(store *storage.Storage, feedHelper *FeedHelper, messagesPath string, user *model.User, defaultFeed *model.Feed, quiet bool) (model.Entries, error) {
 	var err error
 	entries := model.Entries{}
 
@@ -81,13 +85,17 @@ func GetEntriesForEML(store *storage.Storage, feedHelper *FeedHelper, messagesPa
 	entryCounter := 0
 
 	if isDir {
-		err = filepath.Walk(messagesPath, emlWalkFunc(&entries, &entryCounter, store, feedHelper, user, defaultFeed))
-		fmt.Fprintf(os.Stdout, "Reading EML completed. Read EML: %d\n", entryCounter)
+		err = filepath.Walk(messagesPath, emlWalkFunc(&entries, &entryCounter, store, feedHelper, user, defaultFeed, quiet))
+		fmt.Fprintf(os.Stdout, "Reading EML completed. Processed files: %d\n", entryCounter)
 	} else {
 		var entry *model.Entry
 		entry, err = emlToEntry(store, feedHelper, messagesPath, user, defaultFeed)
 		if err != nil {
-			if _, ok := err.(*FeedIgnoreError); !ok {
+			if _, ok := err.(*FeedIgnoreError); ok {
+				// entry is ignored, be silent
+			} else if _, ok := err.(*FeedNoMatchError); ok && quiet {
+				// entry is not ignored, but quiet flag set, be silent
+			} else {
 				fmt.Fprintf(os.Stderr, "Error on processing file: %s: %s\n", messagesPath, err)
 			}
 		} else {

@@ -20,6 +20,14 @@ type FeedIgnoreError struct{}
 
 func (e *FeedIgnoreError) Error() string { return "" }
 
+type FeedNoMatchError struct {
+	entryUrl string
+}
+
+func (e *FeedNoMatchError) Error() string {
+	return fmt.Sprintf("feed not found for URL: %s", e.entryUrl)
+}
+
 func CreateFeedHelper(store *storage.Storage, user *model.User) (*FeedHelper, error) {
 	var helper FeedHelper
 
@@ -125,7 +133,7 @@ func (h *FeedHelper) FeedForEntryUrl(entryUrl string) (*model.Feed, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("feed not found for URL: %s", entryUrl)
+	return nil, &FeedNoMatchError{entryUrl: entryUrl}
 }
 
 func (h *FeedHelper) FeedByID(feedId int64) *model.Feed {

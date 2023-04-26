@@ -1,7 +1,6 @@
 package eml2miniflux
 
 import (
-	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -64,11 +63,7 @@ func CreateEntryForEML(message *eml.Message, store *storage.Storage, feedHelper 
 	// Assign User & Feed
 	err := assignUserFeed(&entry, store, user, feedHelper, defaultFeed)
 	if err != nil {
-		if _, ok := err.(*FeedIgnoreError); ok {
-			// silently ignore
-			return nil, err
-		}
-		return nil, fmt.Errorf("unable to assign feed to entry: %v", err)
+		return nil, err
 	}
 
 	// Rewrite and sanitize content
