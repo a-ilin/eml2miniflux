@@ -51,6 +51,22 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "\nExample with the feed URL:\n")
 	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable -user=john -feed=https://example.com/rss.xml /path/to/rss.eml\n", prog)
 	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "FEED MAP\n")
+	fmt.Fprintf(os.Stderr, "  Feed map file is a plain text file. Empty lines, or lines starting with # symbol are ignored.\n")
+	fmt.Fprintf(os.Stderr, "  URL substitution is defined as following:\n")
+	fmt.Fprintf(os.Stderr, "    substring-of-EML-URL => defined-feed-URL|none\n")
+	fmt.Fprintf(os.Stderr, "  When 'none' value is used, the EML is ignored without producing warnings.\n")
+	fmt.Fprintf(os.Stderr, "\n  Example of a feed map file:\n")
+	fmt.Fprintf(os.Stderr, "    # EML with xkcd.com in URL should go to corresponding feed\n")
+	fmt.Fprintf(os.Stderr, "    xkcd.com => https://xkcd.com/rss.xml\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "    # EML with devblogs.technet.com in URL should go to the feed of VS\n")
+	fmt.Fprintf(os.Stderr, "    devblogs.technet.com => https://devblogs.microsoft.com/visualstudio/feed/\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "    # EML with blogs.technet.com in URL should be ignored\n")
+	fmt.Fprintf(os.Stderr, "    # Notice schema in the beginning required to avoid undesired match with entries having devblogs.technet.com in URL\n")
+	fmt.Fprintf(os.Stderr, "    http://blogs.technet.com => none\n")
+	fmt.Fprintf(os.Stderr, "\n")
 }
 
 func parseArgs() (Config, error) {
@@ -61,11 +77,11 @@ func parseArgs() (Config, error) {
 
 	flag.Usage = printUsage
 	dbUrlOpt := flag.String("dburl", "", "(mandatory) Database connection URL, ex.: postgres://miniflux:secret@db/miniflux?sslmode=disable")
-	usernameOpt := flag.String("user", "", "(mandatory) Name of the user of the entries. Must be specified.")
-	feedOpt := flag.String("feed", "", "(mandatory?) URL of the feed to assign the entries. Must be specified the feed URL or feed map file.")
-	feedMapOpt := flag.String("feedmap", "", "(mandatory?) Feed map file. Must be specified the feed URL or feed map file.")
+	usernameOpt := flag.String("user", "", "(mandatory) Name of the user of the entries; must be specified")
+	feedOpt := flag.String("feed", "", "(mandatory?) URL of the feed to assign the entries; must be specified the feed URL or feed map file")
+	feedMapOpt := flag.String("feedmap", "", "(mandatory?) Feed map file; must be specified the feed URL or feed map file")
 	batchOpt := flag.Int("batch", 1000, "Pseudo-amount of messages to commit to DB")
-	dryOpt := flag.Bool("dry", false, "Dry run: read EML and attempt necessary transformations, but do not commit changes to the database.")
+	dryOpt := flag.Bool("dry", false, "Dry run: read EML and attempt necessary transformations, but do not commit changes to the database")
 	retriesOpt := flag.Int("retries", 10, "Amount of attempts to run a database transaction")
 	flag.Parse()
 

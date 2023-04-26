@@ -53,7 +53,9 @@ func emlWalkFunc(entries *model.Entries, entryCounter *int, store *storage.Stora
 				var entry *model.Entry
 				entry, err = emlToEntry(store, feedHelper, path, user, defaultFeed)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error on processing file: %s: %s\n", path, err)
+					if _, ok := err.(*FeedIgnoreError); !ok {
+						fmt.Fprintf(os.Stderr, "Error on processing file: %s: %s\n", path, err)
+					}
 				} else {
 					*entries = append(*entries, entry)
 				}
@@ -85,7 +87,9 @@ func GetEntriesForEML(store *storage.Storage, feedHelper *FeedHelper, messagesPa
 		var entry *model.Entry
 		entry, err = emlToEntry(store, feedHelper, messagesPath, user, defaultFeed)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error on processing file: %s: %s\n", messagesPath, err)
+			if _, ok := err.(*FeedIgnoreError); !ok {
+				fmt.Fprintf(os.Stderr, "Error on processing file: %s: %s\n", messagesPath, err)
+			}
 		} else {
 			entries = append(entries, entry)
 		}

@@ -16,6 +16,10 @@ type FeedHelper struct {
 	feedsId     map[int64]*model.Feed
 }
 
+type FeedIgnoreError struct{}
+
+func (e *FeedIgnoreError) Error() string { return "" }
+
 func CreateFeedHelper(store *storage.Storage, user *model.User) (*FeedHelper, error) {
 	var helper FeedHelper
 
@@ -34,12 +38,13 @@ func (h *FeedHelper) loadAllFeeds(store *storage.Storage, user *model.User) erro
 	}
 
 	h.feedsUrl = make(map[string]*model.Feed)
+	h.feedsId = make(map[int64]*model.Feed)
+
+	// special case to allow entry ignoring
+	h.feedsUrl["none"] = nil
+
 	for _, feed := range allFeeds {
 		h.feedsUrl[feed.FeedURL] = feed
-	}
-
-	h.feedsId = make(map[int64]*model.Feed)
-	for _, feed := range allFeeds {
 		h.feedsId[feed.ID] = feed
 	}
 
@@ -109,14 +114,18 @@ func (h *FeedHelper) processConfigLine(line string) error {
 	return nil
 }
 
-func (h *FeedHelper) FeedForEntryUrl(entryUrl string) *model.Feed {
+func (h *FeedHelper) FeedForEntryUrl(entryUrl string) (*model.Feed, error) {
 	for e, f := range h.feedsLookup {
 		if strings.Contains(entryUrl, e) {
-			return f
+			if f == nil {
+				return nil, &FeedIgnoreError{}
+			}
+
+			return f, nil
 		}
 	}
 
-	return nil
+	return nil, fmt.Errorf("feed not found for URL: %s", entryUrl)
 }
 
 func (h *FeedHelper) FeedByID(feedId int64) *model.Feed {

@@ -64,6 +64,10 @@ func CreateEntryForEML(message *eml.Message, store *storage.Storage, feedHelper 
 	// Assign User & Feed
 	err := assignUserFeed(&entry, store, user, feedHelper, defaultFeed)
 	if err != nil {
+		if _, ok := err.(*FeedIgnoreError); ok {
+			// silently ignore
+			return nil, err
+		}
 		return nil, fmt.Errorf("unable to assign feed to entry: %v", err)
 	}
 
@@ -74,11 +78,13 @@ func CreateEntryForEML(message *eml.Message, store *storage.Storage, feedHelper 
 }
 
 func assignUserFeed(entry *model.Entry, store *storage.Storage, user *model.User, feedHelper *FeedHelper, defaultFeed *model.Feed) error {
+	var err error
+
 	feed := defaultFeed
 	if defaultFeed == nil {
-		feed = feedHelper.FeedForEntryUrl(entry.URL)
-		if feed == nil {
-			return fmt.Errorf(`cannot find feed for entry URL: %v`, entry.URL)
+		feed, err = feedHelper.FeedForEntryUrl(entry.URL)
+		if err != nil {
+			return err
 		}
 	}
 
