@@ -29,10 +29,10 @@ func UpdateStorageEntries(entries model.Entries, store *storage.Storage, batchSi
 			entries = entries[batchSize:]
 		}
 
-		for retries > 0 {
+		for retry := 0 ; retry < retries; retry++ {
 			err = store.RefreshFeedEntries(userID, feedID, batch, overwrite)
 			if err != nil {
-				retries--
+				fmt.Fprintf(os.Stderr, "Database transaction failed: %s. Retrying...\n", err)
 				time.Sleep(10 * time.Second)
 			} else {
 				break
