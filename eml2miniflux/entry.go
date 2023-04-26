@@ -4,6 +4,7 @@ import (
 	"math"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/rylans/getlang"
@@ -38,8 +39,13 @@ func CreateEntryForEML(message *eml.Message, store *storage.Storage, feedHelper 
 		entry.CreatedAt = message.ReceivedDate
 		entry.ChangedAt = message.ReceivedDate
 	} else {
-		entry.CreatedAt = message.Date
-		entry.ChangedAt = message.Date
+		entry.CreatedAt = time.Now()
+		entry.ChangedAt = time.Now()
+	}
+
+	// Some messages do not contain publication date, which is then being set to current time
+	if entry.Date.After(entry.CreatedAt) {
+		entry.Date = entry.CreatedAt
 	}
 
 	if message.Sender != nil {
