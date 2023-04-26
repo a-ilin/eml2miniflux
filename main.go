@@ -18,10 +18,11 @@ type Config struct {
 	Username    string
 	Feed        string
 	FeedMapFile string
+	MarkRead    bool
 	BatchSize   int
 	Retries     int
 	DryRun      bool
-	Quiet		bool
+	Quiet       bool
 }
 
 var (
@@ -53,18 +54,19 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "\nEmbedded Miniflux version: %s\n", MinifluxVersion)
 	fmt.Fprintf(os.Stderr, "\nOptions:\n")
 	flag.PrintDefaults()
-	fmt.Fprintf(os.Stderr, "\nExample with the feed map file:\n")
+	fmt.Fprintf(os.Stderr, "\nExample using the feed map file:\n")
 	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable -user=john -feedmap=/path/to/feed_helper.txt /path/to/rss.eml\n", prog)
-	fmt.Fprintf(os.Stderr, "\nExample with the feed URL:\n")
+	fmt.Fprintf(os.Stderr, "\nExample using the feed URL:\n")
 	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable -user=john -feed=https://example.com/rss.xml /path/to/rss.eml\n", prog)
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "FEED MAP\n")
-	fmt.Fprintf(os.Stderr, "  Feed map file is a plain text file. Empty lines, or lines starting with # symbol are ignored.\n")
+	fmt.Fprintf(os.Stderr, "  Feed map file contains URL substitution rules for matching of multiple EML files within a directory into multiple feeds.\n")
+	fmt.Fprintf(os.Stderr, "  Empty lines, or lines starting with # symbol are ignored.\n")
 	fmt.Fprintf(os.Stderr, "  URL substitution is defined as following:\n")
 	fmt.Fprintf(os.Stderr, "    substring-of-EML-URL => defined-feed-URL|none\n")
 	fmt.Fprintf(os.Stderr, "  When 'none' value is used, the EML is ignored without producing warnings.\n")
 	fmt.Fprintf(os.Stderr, "\n  Example of a feed map file:\n")
-	fmt.Fprintf(os.Stderr, "    # EML with xkcd.com in URL should go to corresponding feed\n")
+	fmt.Fprintf(os.Stderr, "    # EML with xkcd.com in URL should go to the corresponding feed\n")
 	fmt.Fprintf(os.Stderr, "    xkcd.com => https://xkcd.com/rss.xml\n")
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "    # EML with devblogs.technet.com in URL should go to the feed of VS\n")
@@ -94,9 +96,10 @@ func parseArgs() (Config, error) {
 
 	flag.Usage = printUsage
 	dbUrlOpt := flag.String("dburl", "", "(mandatory) Database connection URL, ex.: postgres://miniflux:secret@db/miniflux?sslmode=disable")
-	usernameOpt := flag.String("user", "", "(mandatory) Name of the user of the entries; must be specified")
-	feedOpt := flag.String("feed", "", "(mandatory?) URL of the feed to assign the entries; must be specified the feed URL or feed map file")
-	feedMapOpt := flag.String("feedmap", "", "(mandatory?) Feed map file; must be specified the feed URL or feed map file")
+	usernameOpt := flag.String("user", "", "(mandatory) Name of the user of the entries")
+	feedOpt := flag.String("feed", "", "(mandatory?) URL of the feed to assign the entries; must be specified the feed URL or the feed map file")
+	feedMapOpt := flag.String("feedmap", "", "(mandatory?) Feed map file; must be specified the feed URL or the feed map file")
+	markReadOpt := flag.Bool("mark", false, "Mark the inserted entries as read")
 	batchOpt := flag.Int("batch", 1000, "Pseudo-amount of messages to commit to DB")
 	dryOpt := flag.Bool("dry", false, "Dry run: read EML and attempt necessary transformations, but do not commit changes to the database")
 	retriesOpt := flag.Int("retries", 10, "Amount of attempts to run a database transaction")
@@ -142,6 +145,7 @@ func parseArgs() (Config, error) {
 		return Config{}, fmt.Errorf("retries amount must be positive")
 	}
 
+	config.MarkRead = *markReadOpt
 	config.DryRun = *dryOpt
 	config.Quiet = *quietOpt
 
@@ -192,9 +196,17 @@ func runApp(config Config) error {
 		}
 	}
 
+	// Load EML
 	entries, err := eml2miniflux.GetEntriesForEML(store, feedHelper, config.MessageFile, user, defaultFeed, config.Quiet)
 	if err != nil {
 		return fmt.Errorf(`cannot create entry for message: %v`, err)
+	}
+
+	// Mark entries as read
+	if config.MarkRead {
+		for _, entry := range entries {
+			entry.Status = model.EntryStatusRead
+		}
 	}
 
 	if !config.DryRun {

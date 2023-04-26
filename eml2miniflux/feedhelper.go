@@ -25,7 +25,10 @@ type FeedNoMatchError struct {
 }
 
 func (e *FeedNoMatchError) Error() string {
-	return fmt.Sprintf("feed not found for URL: %s", e.entryUrl)
+	if len(e.entryUrl) > 0 {
+		return fmt.Sprintf("feed not found for URL: %s", e.entryUrl)
+	}
+	return "feed not found: empty URL"
 }
 
 func CreateFeedHelper(store *storage.Storage, user *model.User) (*FeedHelper, error) {
