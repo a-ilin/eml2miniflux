@@ -19,6 +19,7 @@ type Config struct {
 	Feed        string
 	FeedMapFile string
 	MarkRead    bool
+	Update      bool
 	BatchSize   int
 	Retries     int
 	DryRun      bool
@@ -100,6 +101,7 @@ func parseArgs() (Config, error) {
 	feedOpt := flag.String("feed", "", "(mandatory?) URL of the feed to assign the entries; must be specified the feed URL or the feed map file")
 	feedMapOpt := flag.String("feedmap", "", "(mandatory?) Feed map file; must be specified the feed URL or the feed map file")
 	markReadOpt := flag.Bool("mark", false, "Mark the inserted entries as read")
+	updateOpt := flag.Bool("update", false, "Update existent entries in database")
 	batchOpt := flag.Int("batch", 1000, "Pseudo-amount of messages to commit to DB")
 	dryOpt := flag.Bool("dry", false, "Dry run: read EML and attempt necessary transformations, but do not commit changes to the database")
 	retriesOpt := flag.Int("retries", 10, "Amount of attempts to run a database transaction")
@@ -146,6 +148,7 @@ func parseArgs() (Config, error) {
 	}
 
 	config.MarkRead = *markReadOpt
+	config.Update = *updateOpt
 	config.DryRun = *dryOpt
 	config.Quiet = *quietOpt
 
@@ -212,7 +215,7 @@ func runApp(config Config) error {
 	if !config.DryRun {
 		// Commit to DB
 		fmt.Fprintf(os.Stdout, "Committing to DB...\n")
-		err = eml2miniflux.UpdateStorageEntries(entries, store, config.BatchSize, config.Retries, false)
+		err = eml2miniflux.UpdateStorageEntries(entries, store, config.BatchSize, config.Retries, config.Update)
 		if err == nil {
 			fmt.Fprintf(os.Stdout, "Committing to DB completed.\n")
 		}
