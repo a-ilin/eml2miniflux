@@ -24,6 +24,11 @@ type Config struct {
 	Quiet		bool
 }
 
+var (
+	// set via LDFLAGS in Makefile
+	MinifluxVersion string
+)
+
 // https://stackoverflow.com/a/25113485
 func permutateArgs(args []string) int {
 	args = args[1:]
@@ -43,9 +48,10 @@ func permutateArgs(args []string) int {
 
 func printUsage() {
 	prog := filepath.Base(os.Args[0])
-	fmt.Fprintf(os.Stderr, "Usage:\n")
-	fmt.Fprintf(os.Stderr, "  %s <options> <EML_file | directory>\n", prog)
-	fmt.Fprintf(os.Stderr, "Options:\n")
+	fmt.Fprintf(os.Stderr, "Usage: %s <options> <EML_file | directory>\n", prog)
+	fmt.Fprintf(os.Stderr, "Import EML files into Miniflux.\n")
+	fmt.Fprintf(os.Stderr, "\nEmbedded Miniflux version: %s\n", MinifluxVersion)
+	fmt.Fprintf(os.Stderr, "\nOptions:\n")
 	flag.PrintDefaults()
 	fmt.Fprintf(os.Stderr, "\nExample with the feed map file:\n")
 	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable -user=john -feedmap=/path/to/feed_helper.txt /path/to/rss.eml\n", prog)
@@ -67,6 +73,16 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, "    # EML with blogs.technet.com in URL should be ignored\n")
 	fmt.Fprintf(os.Stderr, "    # Notice schema in the beginning required to avoid undesired match with entries having devblogs.technet.com in URL\n")
 	fmt.Fprintf(os.Stderr, "    http://blogs.technet.com => none\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "TROUBLESHOOT\n")
+	fmt.Fprintf(os.Stderr, "  Error 'Error on processing file: some.eml: feed not found for URL: http://some.url' specifies that the URL cannot be matched to a feed.\n")
+	fmt.Fprintf(os.Stderr, "  Add the URL to a feed map file with the corresponding feed URL substitution, or use '-feed' option.\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "  Error 'Failed: you must run the SQL migrations' specifies the difference of the installed Miniflux version and the used one in this tool.\n")
+	fmt.Fprintf(os.Stderr, "  In order to proceed either the installed Miniflux must be updated, or the submodule 'sub/miniflux' of this tool.\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "  Error 'Failed: cannot update entries in database: store: unable to start transaction: EOF' specifies that network connection to the database is unstable.\n")
+	fmt.Fprintf(os.Stderr, "  Use parameter '-retries' to increase amount of attempts, or connect to a stable network.\n")
 	fmt.Fprintf(os.Stderr, "\n")
 }
 
