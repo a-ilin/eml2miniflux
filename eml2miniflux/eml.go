@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/a-ilin/eml2miniflux/util"
 	"github.com/sg3des/eml"
 	"miniflux.app/model"
 	"miniflux.app/storage"
@@ -77,7 +78,7 @@ func GetEntriesForEML(store *storage.Storage, feedHelper *FeedHelper, messagesPa
 	var err error
 	entries := model.Entries{}
 
-	isDir, err := isDirectory(messagesPath)
+	isDir, err := util.IsDirectory(messagesPath)
 	if err != nil {
 		return entries, fmt.Errorf("cannot read path: %s %v", messagesPath, err)
 	}

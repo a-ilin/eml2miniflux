@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/a-ilin/eml2miniflux/eml2miniflux"
+	"github.com/a-ilin/eml2miniflux/util"
 	"miniflux.app/database"
 	"miniflux.app/model"
 	"miniflux.app/storage"
@@ -15,16 +18,25 @@ import (
 type Config struct {
 	DatabaseUrl string
 	MessageFile string
+	MessageType int
 	Username    string
 	Feed        string
 	FeedMapFile string
 	MarkRead    bool
 	Update      bool
+	Remove      bool
 	BatchSize   int
 	Retries     int
 	DryRun      bool
 	Quiet       bool
+	DumpFile    string
 }
+
+const (
+	MESSAGE_EML = iota
+	MESSAGE_JSON
+	MESSAGE_DIRECTORY
+)
 
 var (
 	// set via LDFLAGS in Makefile
@@ -50,15 +62,18 @@ func permutateArgs(args []string) int {
 
 func printUsage() {
 	prog := filepath.Base(os.Args[0])
-	fmt.Fprintf(os.Stderr, "Usage: %s <options> <EML_file | directory>\n", prog)
+	fmt.Fprintf(os.Stderr, "Usage: %s <options> <EML_file | directory | dump_json_file>\n", prog)
 	fmt.Fprintf(os.Stderr, "Import EML files into Miniflux.\n")
 	fmt.Fprintf(os.Stderr, "\nEmbedded Miniflux version: %s\n", MinifluxVersion)
 	fmt.Fprintf(os.Stderr, "\nOptions:\n")
 	flag.PrintDefaults()
-	fmt.Fprintf(os.Stderr, "\nExample using the feed map file:\n")
-	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable -user=john -feedmap=/path/to/feed_helper.txt /path/to/rss.eml\n", prog)
 	fmt.Fprintf(os.Stderr, "\nExample using the feed URL:\n")
 	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable -user=john -feed=https://example.com/rss.xml /path/to/rss.eml\n", prog)
+	fmt.Fprintf(os.Stderr, "\nExample using the feed map file:\n")
+	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable -user=john -feedmap=/path/to/feed_helper.txt /path/to/directory/with/emls\n", prog)
+	fmt.Fprintf(os.Stderr, "\nExample using the JSON dump, with 2 steps: parsing and importing:\n")
+	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable -user=john -feed=https://example.com/rss.xml -dump=entries.json -dry /path/to/directory/with/emls\n", prog)
+	fmt.Fprintf(os.Stderr, "  %s -dburl=postgres://miniflux:password@server:5432/miniflux?sslmode=disable entries.json\n", prog)
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "FEED MAP\n")
 	fmt.Fprintf(os.Stderr, "  Feed map file contains URL substitution rules for matching of multiple EML files within a directory into multiple feeds.\n")
@@ -90,6 +105,7 @@ func printUsage() {
 }
 
 func parseArgs() (Config, error) {
+	var err error
 	var config Config
 
 	// Command line
@@ -101,11 +117,13 @@ func parseArgs() (Config, error) {
 	feedOpt := flag.String("feed", "", "(mandatory?) URL of the feed to assign the entries; must be specified the feed URL or the feed map file")
 	feedMapOpt := flag.String("feedmap", "", "(mandatory?) Feed map file; must be specified the feed URL or the feed map file")
 	markReadOpt := flag.Bool("mark", false, "Mark the inserted entries as read")
-	updateOpt := flag.Bool("update", false, "Update existent entries in database")
-	batchOpt := flag.Int("batch", 1000, "Pseudo-amount of messages to commit to DB")
+	updateOpt := flag.Bool("update", false, "Update existent entries in the database")
+	removeOpt := flag.Bool("remove", false, "Remove existent entries with matched user and hash from the database")
+	batchOpt := flag.Int("batch", 1000, "Pseudo-amount of messages to commit to the database at a time")
 	dryOpt := flag.Bool("dry", false, "Dry run: read EML and attempt necessary transformations, but do not commit changes to the database")
 	retriesOpt := flag.Int("retries", 10, "Amount of attempts to run a database transaction")
 	quietOpt := flag.Bool("quiet", false, "Suppress output about unmatched messages")
+	dumpOpt := flag.String("dump", "", "Write extracted EML entries dump to a specified file")
 	flag.Parse()
 
 	// Process non-options
@@ -118,23 +136,15 @@ func parseArgs() (Config, error) {
 		return Config{}, fmt.Errorf("EML file is not specified")
 	}
 
+	// Detect message file type
+	config.MessageType, err = messageFileType(config.MessageFile)
+	if err != nil {
+		return Config{}, err
+	}
+
 	config.DatabaseUrl = *dbUrlOpt
 	if len(config.DatabaseUrl) == 0 {
 		return Config{}, fmt.Errorf("database URL is not specified")
-	}
-
-	config.Username = *usernameOpt
-	if len(config.Username) == 0 {
-		return Config{}, fmt.Errorf("user must be specified")
-	}
-
-	config.Feed = *feedOpt
-	config.FeedMapFile = *feedMapOpt
-	if len(config.Feed) == 0 && len(config.FeedMapFile) == 0 {
-		return Config{}, fmt.Errorf("feed URL or feed map file should be specified")
-	}
-	if len(config.Feed) > 0 && len(config.FeedMapFile) > 0 {
-		return Config{}, fmt.Errorf("feed URL and feed map file cannot be specified together")
 	}
 
 	config.BatchSize = *batchOpt
@@ -147,12 +157,217 @@ func parseArgs() (Config, error) {
 		return Config{}, fmt.Errorf("retries amount must be positive")
 	}
 
+	config.Quiet = *quietOpt
+	config.DumpFile = *dumpOpt
 	config.MarkRead = *markReadOpt
 	config.Update = *updateOpt
+	config.Remove = *removeOpt
 	config.DryRun = *dryOpt
-	config.Quiet = *quietOpt
+
+	if config.DryRun && (config.Update || config.Remove) {
+		fmt.Fprintf(os.Stdout, "Options '-update' and '-remove' do not have effect when '-dry' is specified.\n")
+	}
+
+	// Options required only for EML processing
+	if config.MessageType == MESSAGE_EML || config.MessageType == MESSAGE_DIRECTORY {
+		// Username
+		config.Username = *usernameOpt
+		if len(config.Username) == 0 {
+			return Config{}, fmt.Errorf("user must be specified")
+		}
+
+		// Feed & FeedMap
+		config.Feed = *feedOpt
+		config.FeedMapFile = *feedMapOpt
+		if len(config.Feed) == 0 && len(config.FeedMapFile) == 0 {
+			return Config{}, fmt.Errorf("feed URL or feed map file should be specified")
+		}
+		if len(config.Feed) > 0 && len(config.FeedMapFile) > 0 {
+			return Config{}, fmt.Errorf("feed URL and feed map file cannot be specified together")
+		}
+	}
 
 	return config, nil
+}
+
+func messageFileType(filePath string) (int, error) {
+	isDir, err := util.IsDirectory(filePath)
+	if err != nil {
+		return 0, fmt.Errorf("unable to get file info for '%s': %v", filePath, err)
+	}
+
+	if isDir {
+		return MESSAGE_DIRECTORY, nil
+	} else if strings.HasSuffix(strings.ToLower(filePath), ".eml") {
+		return MESSAGE_EML, nil
+	} else if strings.HasSuffix(strings.ToLower(filePath), ".json") {
+		return MESSAGE_JSON, nil
+	}
+
+	return 0, fmt.Errorf("program argument should be a directory or file with extension '.eml' or '.json': '%s'", filePath)
+}
+
+type App struct {
+	Config      Config
+	DbProc      eml2miniflux.DatabaseProcessor
+	user        *model.User
+	feedHelper  *eml2miniflux.FeedHelper
+	defaultFeed *model.Feed
+}
+
+func (a *App) init() error {
+	// Required only for EML processing
+	if a.Config.MessageType == MESSAGE_EML || a.Config.MessageType == MESSAGE_DIRECTORY {
+		var err error
+
+		// Get user
+		a.user, err = a.DbProc.Store.UserByUsername(a.Config.Username)
+		if err != nil {
+			return fmt.Errorf("unable to retreive user by name '%s': %v", a.Config.Username, err)
+		}
+
+		// Feed lookup helper
+		a.feedHelper, err = eml2miniflux.CreateFeedHelper(a.DbProc.Store, a.user)
+		if err != nil {
+			return fmt.Errorf(`cannot create feed helper: %v`, err)
+		}
+
+		// Default feed from command line
+		if len(a.Config.FeedMapFile) > 0 {
+			err = a.feedHelper.LoadMap(a.Config.FeedMapFile)
+			if err != nil {
+				return fmt.Errorf(`cannot load feed map file: %v`, err)
+			}
+		} else {
+			a.defaultFeed = a.feedHelper.FeedByURL(a.Config.Feed)
+			if a.defaultFeed == nil {
+				return fmt.Errorf("unable to retrieve user by name '%s': %v", a.Config.Username, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (a *App) run() error {
+	entries, err := a.loadEntries()
+	if err != nil {
+		return fmt.Errorf("unable to load entries: %v", err)
+	}
+
+	if a.Config.MarkRead {
+		for _, entry := range entries {
+			entry.Status = model.EntryStatusRead
+		}
+	}
+
+	err = a.dumpJson(entries)
+	if err != nil {
+		return err
+	}
+
+	if !a.Config.DryRun {
+		err = a.removeFromDb(entries)
+		if err != nil {
+			return err
+		}
+
+		err = a.insertIntoDb(entries)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (a *App) loadEntries() (model.Entries, error) {
+	var err error
+	var entries model.Entries
+
+	fmt.Fprintf(os.Stdout, "Loading entries...\n")
+
+	switch a.Config.MessageType {
+	case MESSAGE_EML, MESSAGE_DIRECTORY:
+		entries, err = eml2miniflux.GetEntriesForEML(a.DbProc.Store, a.feedHelper, a.Config.MessageFile, a.user, a.defaultFeed, a.Config.Quiet)
+	case MESSAGE_JSON:
+		entries, err = a.loadJson()
+	default:
+		return nil, fmt.Errorf(`unknown message type: %d`, a.Config.MessageType)
+	}
+
+	fmt.Fprintf(os.Stdout, "Loading entries completed.\n")
+	fmt.Fprintf(os.Stdout, "Loaded entries: %d\n", len(entries))
+
+	return entries, err
+}
+
+func (a *App) loadJson() (model.Entries, error) {
+	data, err := os.ReadFile(a.Config.MessageFile)
+	if err != nil {
+		return nil, fmt.Errorf(`cannot read message file: %v`, err)
+	}
+
+	var entries model.Entries
+	err = json.Unmarshal(data, &entries)
+	if err != nil {
+		return nil, fmt.Errorf(`cannot unmarshal JSON: %v`, err)
+	}
+	return entries, nil
+}
+
+func (a *App) dumpJson(entries model.Entries) error {
+	if len(a.Config.DumpFile) > 0 {
+		fmt.Fprintf(os.Stdout, "Dumping to JSON...\n")
+		dump, err := json.Marshal(entries)
+		if err != nil {
+			return fmt.Errorf(`cannot dump entries into JSON: %v`, err)
+		}
+
+		err = os.WriteFile(a.Config.DumpFile, dump, 0666)
+		if err != nil {
+			return fmt.Errorf(`cannot write JSON to file: %v`, err)
+		}
+		fmt.Fprintf(os.Stdout, "Dumping to JSON completed.\n")
+	}
+
+	return nil
+}
+
+func (a *App) removeFromDb(entries model.Entries) error {
+	if a.Config.Remove {
+		fmt.Fprintf(os.Stdout, "Removal from DB...\n")
+		err := a.DbProc.RemoveStorageEntries(entries)
+		if err == nil {
+			fmt.Fprintf(os.Stdout, "Removal from DB completed.\n")
+		} else {
+			return fmt.Errorf(`cannot remove entries from database: %v`, err)
+		}
+	}
+
+	return nil
+}
+
+func (a *App) insertIntoDb(entries model.Entries) error {
+	fmt.Fprintf(os.Stdout, "Insertion into DB...\n")
+	err := a.DbProc.UpdateStorageEntries(entries, a.Config.Update)
+
+	// Statistic
+	var insertedEntries int
+	for _, entry := range entries {
+		if entry.ID != 0 {
+			insertedEntries++
+		}
+	}
+
+	fmt.Fprintf(os.Stdout, "Total inserted entries: %d\n", insertedEntries)
+	if err == nil {
+		fmt.Fprintf(os.Stdout, "Insertion into DB completed.\n")
+	} else {
+		return fmt.Errorf(`cannot update entries in database: %v`, err)
+	}
+
+	return nil
 }
 
 func runApp(config Config) error {
@@ -173,68 +388,22 @@ func runApp(config Config) error {
 		return fmt.Errorf(`you must run the SQL migrations, %v`, err)
 	}
 
-	// Get user
-	user, err := store.UserByUsername(config.Username)
+	a := App{
+		Config: config,
+		DbProc: eml2miniflux.DatabaseProcessor{
+			Db:        db,
+			Store:     store,
+			BatchSize: config.BatchSize,
+			Retries:   config.Retries,
+		},
+	}
+
+	err = a.init()
 	if err != nil {
-		return fmt.Errorf("unable to retreive user by name '%s': %v", config.Username, err)
+		return err
 	}
 
-	// Feed lookup helper
-	feedHelper, err := eml2miniflux.CreateFeedHelper(store, user)
-	if err != nil {
-		return fmt.Errorf(`cannot create feed helper: %v`, err)
-	}
-
-	// Default feed from command line
-	var defaultFeed *model.Feed
-	if len(config.FeedMapFile) > 0 {
-		err = feedHelper.LoadMap(config.FeedMapFile)
-		if err != nil {
-			return fmt.Errorf(`cannot load feed map file: %v`, err)
-		}
-	} else {
-		defaultFeed = feedHelper.FeedByURL(config.Feed)
-		if defaultFeed == nil {
-			return fmt.Errorf("unable to retrieve user by name '%s': %v", config.Username, err)
-		}
-	}
-
-	// Load EML
-	entries, err := eml2miniflux.GetEntriesForEML(store, feedHelper, config.MessageFile, user, defaultFeed, config.Quiet)
-	if err != nil {
-		return fmt.Errorf(`cannot create entry for message: %v`, err)
-	}
-
-	// Mark entries as read
-	if config.MarkRead {
-		for _, entry := range entries {
-			entry.Status = model.EntryStatusRead
-		}
-	}
-
-	if !config.DryRun {
-		// Commit to DB
-		fmt.Fprintf(os.Stdout, "Committing to DB...\n")
-		err = eml2miniflux.UpdateStorageEntries(entries, store, config.BatchSize, config.Retries, config.Update)
-		if err == nil {
-			fmt.Fprintf(os.Stdout, "Committing to DB completed.\n")
-		}
-
-		// Statistic
-		var insertedEntries int
-		for _, entry := range entries {
-			if entry.ID != 0 {
-				insertedEntries++
-			}
-		}
-		fmt.Fprintf(os.Stdout, "Inserted entries: %d\n", insertedEntries)
-
-		if err != nil {
-			return fmt.Errorf(`cannot update entries in database: %v`, err)
-		}
-	}
-
-	return nil
+	return a.run()
 }
 
 func mainReturn() int {

@@ -25,7 +25,6 @@ var (
 func CreateEntryForEML(message *eml.Message, store *storage.Storage, feedHelper *FeedHelper, user *model.User, defaultFeed *model.Feed) (*model.Entry, error) {
 	entry := model.Entry{
 		Status:     model.EntryStatusUnread,
-		Hash:       entryHash(message),
 		Title:      message.Subject,
 		URL:        entryUrl(message),
 		Date:       message.Date,
@@ -34,6 +33,8 @@ func CreateEntryForEML(message *eml.Message, store *storage.Storage, feedHelper 
 		Enclosures: make(model.EnclosureList, 0),
 		Tags:       message.Keywords,
 	}
+
+	entry.Hash = entryHash(message, entry.URL)
 
 	if !message.ReceivedDate.IsZero() {
 		entry.CreatedAt = message.ReceivedDate
@@ -67,37 +68,36 @@ func CreateEntryForEML(message *eml.Message, store *storage.Storage, feedHelper 
 	}
 
 	// Assign User & Feed
-	err := assignUserFeed(&entry, store, user, feedHelper, defaultFeed)
+	feed, err := assignUserFeed(&entry, store, user, feedHelper, defaultFeed)
 	if err != nil {
 		return nil, err
 	}
 
 	// Rewrite and sanitize content
-	rewriteEntry(&entry, user)
+	rewriteEntry(&entry, user, feed)
 
 	return &entry, nil
 }
 
-func assignUserFeed(entry *model.Entry, store *storage.Storage, user *model.User, feedHelper *FeedHelper, defaultFeed *model.Feed) error {
+func assignUserFeed(entry *model.Entry, store *storage.Storage, user *model.User, feedHelper *FeedHelper, defaultFeed *model.Feed) (*model.Feed, error) {
 	var err error
 
 	feed := defaultFeed
 	if defaultFeed == nil {
 		feed, err = feedHelper.FeedForEntryUrl(entry.URL)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	entry.UserID = user.ID
 	entry.FeedID = feed.ID
-	entry.Feed = feed
 
-	return nil
+	return feed, nil
 }
 
-func rewriteEntry(entry *model.Entry, user *model.User) {
-	entry.Content = rewrite.Rewriter(entry.URL, entry.Content, entry.Feed.RewriteRules)
+func rewriteEntry(entry *model.Entry, user *model.User, feed *model.Feed) {
+	entry.Content = rewrite.Rewriter(entry.URL, entry.Content, feed.RewriteRules)
 	entry.Content = strings.TrimSpace(sanitizer.Sanitize(entry.URL, entry.Content))
 	entry.ReadingTime = calculateReadingTime(entry.Content, user)
 }
@@ -128,15 +128,15 @@ func entryUrl(message *eml.Message) string {
 	return ""
 }
 
-func entryHash(message *eml.Message) string {
+func entryHash(message *eml.Message, entryUrl string) string {
 	// remove suffix added by Thunderbird
 	msgId := strings.TrimSuffix(message.MessageId, "@localhost.localdomain")
 	if len(msgId) > 0 {
 		return crypto.Hash(msgId)
 	}
 
-	if len(message.ContentBase) > 0 {
-		return crypto.Hash(message.ContentBase)
+	if len(entryUrl) > 0 {
+		return crypto.Hash(entryUrl)
 	}
 
 	return ""
