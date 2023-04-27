@@ -60,10 +60,30 @@ func (p *DatabaseProcessor) UpdateStorageEntries(allEntries model.Entries, overw
 			return nil
 		}
 
+		// User is the same for all entries
 		userID := batch[0].UserID
-		feedID := batch[0].FeedID
 
-		return p.Store.RefreshFeedEntries(userID, feedID, batch, overwrite)
+		// Sort by feed
+		feedEntries := make(map[int64]*model.Entries)
+		for _, entry := range batch {
+			var entries *model.Entries
+			var ok bool
+			if entries, ok = feedEntries[entry.FeedID]; !ok {
+				e := make(model.Entries, 0, p.BatchSize)
+				entries = &e
+				feedEntries[entry.FeedID] = entries
+			}
+			*entries = append(*entries, entry)
+		}
+
+		for feedID, entries := range feedEntries {
+			err := p.Store.RefreshFeedEntries(userID, feedID, *entries, overwrite)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
 	}
 
 	return p.databaseProcessorRun(proc, allEntries)
@@ -75,6 +95,7 @@ func (p *DatabaseProcessor) RemoveStorageEntries(allEntries model.Entries) error
 			return nil
 		}
 
+		// User is the same for all entries
 		userID := batch[0].UserID
 		entryHashes := make([]string, len(batch))
 
